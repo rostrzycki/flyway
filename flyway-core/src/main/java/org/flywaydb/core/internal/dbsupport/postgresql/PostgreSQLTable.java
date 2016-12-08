@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,7 +45,12 @@ public class PostgreSQLTable extends Table {
 
     @Override
     protected boolean doExists() throws SQLException {
-        return exists(null, schema, name);
+        return jdbcTemplate.queryForBoolean("SELECT EXISTS (\n" +
+                "   SELECT 1\n" +
+                "   FROM   information_schema.tables \n" +
+                "   WHERE  table_schema = ?\n" +
+                "   AND    table_name = ?\n" +
+                ")", schema.getName(), name);
     }
 
     @Override

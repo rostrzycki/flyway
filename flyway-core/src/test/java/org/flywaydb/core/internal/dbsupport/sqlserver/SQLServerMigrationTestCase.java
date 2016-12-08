@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,6 +79,20 @@ public abstract class SQLServerMigrationTestCase extends MigrationTestCase {
     }
 
     /**
+     * Tests clean and migrate for SQL Server Functions.
+     */
+    @Test
+    public void function() throws Exception {
+        flyway.setLocations("migration/dbsupport/sqlserver/sql/function");
+        flyway.migrate();
+
+        flyway.clean();
+
+        // Running migrate again on an unclean database, triggers duplicate object exceptions.
+        flyway.migrate();
+    }
+
+    /**
      * Tests clean and migrate for SQL Server Triggers.
      */
     @Test
@@ -133,6 +147,18 @@ public abstract class SQLServerMigrationTestCase extends MigrationTestCase {
         flyway.migrate();
 
         flyway.clean();
+    }
+
+    /**
+     * Tests clean and migrate for SQL Server sequences.
+     */
+    @Test
+    public void sequence() throws Exception {
+        flyway.setLocations("migration/dbsupport/sqlserver/sql/sequence");
+        flyway.migrate();
+
+        flyway.clean();
+        flyway.migrate();
     }
 
     /**
@@ -196,10 +222,58 @@ public abstract class SQLServerMigrationTestCase extends MigrationTestCase {
         assertEquals(MigrationState.SUCCESS, flyway.info().current().getState());
         assertTrue(jdbcTemplate.queryForInt("SELECT COUNT(*) FROM dbo.CHANGELOG") > 0);
     }
+	
+  /**
+   * Tests that dml errors that occur in the middle of a batch are correctly detected
+   * see issue 718
+   */
+  @Test
+  public void dmlErrorsCorrectlyDetected() throws Exception {
+    String tableName = "sample_table";
+
+    flyway.setLocations("migration/dbsupport/sqlserver/sql/dmlErrorDetection");
+    Map<String, String> placeholders = new HashMap<String, String>();
+    placeholders.put("tableName", dbSupport.quote(tableName));
+    flyway.setPlaceholders(placeholders);
+
+    try {
+      flyway.migrate();
+      fail("This migration should have failed and this point shouldn't have been reached");
+    } catch (FlywaySqlScriptException e) {
+      // root cause of exception must be defined, and it should be FlywaySqlScriptException
+      assertNotNull(e.getCause());
+      assertTrue(e.getCause() instanceof SQLException);
+      // and make sure the failed statement was properly recorded
+      assertEquals(23, e.getLineNumber());
+      assertTrue(e.getStatement().contains("INSERT INTO"));
+      assertTrue(e.getStatement().contains("VALUES(1)"));
+    }
+  }
 
     @Override
     @Ignore("Not supported on SQL Server")
     public void setCurrentSchema() throws Exception {
         //Skip
+    }
+
+    @Override
+    protected void createFlyway3MetadataTable() throws Exception {
+        jdbcTemplate.execute("CREATE TABLE [schema_version] (\n" +
+                "    [version_rank] INT NOT NULL,\n" +
+                "    [installed_rank] INT NOT NULL,\n" +
+                "    [version] NVARCHAR(50) NOT NULL,\n" +
+                "    [description] NVARCHAR(200),\n" +
+                "    [type] NVARCHAR(20) NOT NULL,\n" +
+                "    [script] NVARCHAR(1000) NOT NULL,\n" +
+                "    [checksum] INT,\n" +
+                "    [installed_by] NVARCHAR(100) NOT NULL,\n" +
+                "    [installed_on] DATETIME NOT NULL DEFAULT GETDATE(),\n" +
+                "    [execution_time] INT NOT NULL,\n" +
+                "    [success] BIT NOT NULL\n" +
+                ")");
+        jdbcTemplate.execute("ALTER TABLE [schema_version] ADD CONSTRAINT [schema_version_pk] PRIMARY KEY ([version])");
+        jdbcTemplate.execute("CREATE INDEX [schema_version_vr_idx] ON [schema_version] ([version_rank])");
+        jdbcTemplate.execute("CREATE INDEX [schema_version_ir_idx] ON [schema_version] ([installed_rank])");
+        jdbcTemplate.execute("CREATE INDEX [schema_version_s_idx] ON [schema_version] ([success])");
     }
 }

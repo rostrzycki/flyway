@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -172,6 +172,35 @@ public class JdbcTemplate {
      * @return The query result.
      * @throws SQLException when the query execution failed.
      */
+    public boolean queryForBoolean(String query, String... params) throws SQLException {
+        PreparedStatement statement = null;
+        ResultSet resultSet = null;
+
+        boolean result;
+        try {
+            statement = connection.prepareStatement(query);
+            for (int i = 0; i < params.length; i++) {
+                statement.setString(i + 1, params[i]);
+            }
+            resultSet = statement.executeQuery();
+            resultSet.next();
+            result = resultSet.getBoolean(1);
+        } finally {
+            JdbcUtils.closeResultSet(resultSet);
+            JdbcUtils.closeStatement(statement);
+        }
+
+        return result;
+    }
+
+    /**
+     * Executes this query with these parameters against this connection.
+     *
+     * @param query  The query to execute.
+     * @param params The query parameters.
+     * @return The query result.
+     * @throws SQLException when the query execution failed.
+     */
     public String queryForString(String query, String... params) throws SQLException {
         PreparedStatement statement = null;
         ResultSet resultSet = null;
@@ -232,12 +261,29 @@ public class JdbcTemplate {
         Statement statement = null;
         try {
             statement = connection.createStatement();
-            statement.execute(sql);
-            @SuppressWarnings("ThrowableResultOfMethodCallIgnored") SQLWarning warning = statement.getWarnings();
-            while (warning != null) {
-                LOG.warn(warning.getMessage()
-                        + " (SQL State: " + warning.getSQLState() + " - Error Code: " + warning.getErrorCode() + ")");
-                warning = warning.getNextWarning();
+            statement.setEscapeProcessing(false);
+            boolean hasResults = false;
+            try {
+                hasResults = statement.execute(sql);
+            } finally {
+                @SuppressWarnings("ThrowableResultOfMethodCallIgnored") SQLWarning warning = statement.getWarnings();
+                while (warning != null) {
+                    if ("00000".equals(warning.getSQLState())) {
+                        LOG.info("DB: " + warning.getMessage());
+                    } else {
+                        LOG.warn("DB: " + warning.getMessage()
+                                + " (SQL State: " + warning.getSQLState() + " - Error Code: " + warning.getErrorCode() + ")");
+                    }
+                    warning = warning.getNextWarning();
+                }
+                // retrieve all results to ensure all errors are detected
+                int updateCount = -1;
+                while (hasResults || (updateCount = statement.getUpdateCount()) != -1) {
+                    if (updateCount != -1) {
+                        LOG.debug("Update Count: " + updateCount);
+                    }
+                    hasResults = statement.getMoreResults();
+                }
             }
         } finally {
             JdbcUtils.closeStatement(statement);

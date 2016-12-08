@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,18 +20,27 @@ import org.flywaydb.core.api.MigrationInfo;
 import org.flywaydb.core.api.MigrationState;
 import org.flywaydb.core.api.MigrationType;
 import org.flywaydb.core.api.MigrationVersion;
+import org.flywaydb.core.internal.dbsupport.JdbcTemplate;
 import org.flywaydb.core.internal.dbsupport.Schema;
 import org.flywaydb.core.internal.dbsupport.h2.H2DbSupport;
+import org.flywaydb.core.internal.util.ClassUtils;
 import org.flywaydb.core.internal.util.jdbc.DriverDataSource;
 import org.flywaydb.core.internal.util.logging.LogFactory;
 import org.flywaydb.core.internal.util.logging.StringLogCreator;
+import org.flywaydb.core.internal.util.scanner.classpath.ClassPathResource;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.junit.Assert.*;
 
@@ -40,6 +49,28 @@ import static org.junit.Assert.*;
  */
 @SuppressWarnings({"JavaDoc"})
 public class FlywayMediumTest {
+    /**
+     * The old classloader, to be restored after a test completes.
+     */
+    private static ClassLoader oldClassLoader;
+
+    @BeforeClass
+    public static void setUp() throws IOException {
+        oldClassLoader = getClassLoader();
+        String jar = new ClassPathResource("no-directory-entries.jar", getClassLoader()).getLocationOnDisk();
+        assertTrue(new File(jar).isFile());
+        ClassUtils.addJarOrDirectoryToClasspath(jar);
+    }
+
+    private static ClassLoader getClassLoader() {
+        return Thread.currentThread().getContextClassLoader();
+    }
+
+    @AfterClass
+    public static void tearDown() {
+        Thread.currentThread().setContextClassLoader(oldClassLoader);
+    }
+
     @Test
     public void multipleSetDataSourceCalls() throws Exception {
         DriverDataSource dataSource1 =
@@ -91,7 +122,7 @@ public class FlywayMediumTest {
         assertEquals(MigrationState.ABOVE_TARGET, flyway.info().all()[3].getState());
 
         flyway.migrate();
-        assertEquals(-1336099243, flyway.info().current().getChecksum().intValue());
+        assertEquals(64723601, flyway.info().current().getChecksum().intValue());
         assertEquals("1.1", flyway.info().current().getVersion().toString());
         assertEquals(MigrationState.SUCCESS, flyway.info().current().getState());
         assertEquals(4, flyway.info().all().length);
@@ -109,12 +140,42 @@ public class FlywayMediumTest {
     }
 
     @Test
+    public void infoPending() throws Exception {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_info_pending;DB_CLOSE_DELAY=-1", "sa", null);
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+
+        assertEquals(2, flyway.info().pending().length);
+    }
+
+    @Test
+    public void callback() throws Exception {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_callback;DB_CLOSE_DELAY=-1", "sa", "", "SET AUTOCOMMIT OFF");
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+        flyway.setSqlMigrationPrefix("");
+        flyway.setLocations("migration/callback");
+        flyway.migrate();
+        assertEquals("1", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationState.SUCCESS, flyway.info().current().getState());
+
+        assertEquals("Mr Callback", new JdbcTemplate(dataSource.getConnection(), 0).queryForString("SELECT name FROM test_user"));
+    }
+
+    @Test
     public void repairFirst() throws Exception {
         DriverDataSource dataSource =
                 new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_repair;DB_CLOSE_DELAY=-1", "sa", "", "SET AUTOCOMMIT OFF");
 
         Flyway flyway = new Flyway();
         flyway.setDataSource(dataSource);
+        Map<String, String> placeholders = new HashMap<String, String>();
+        placeholders.put("tableName", "aaa");
+        flyway.setPlaceholders(placeholders);
 
         flyway.setLocations("migration/failed");
         assertEquals(1, flyway.info().all().length);
@@ -132,56 +193,72 @@ public class FlywayMediumTest {
     }
 
     @Test
-    public void infoInit() throws Exception {
+    public void infoBaseline() throws Exception {
         DriverDataSource dataSource =
                 new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_info_init;DB_CLOSE_DELAY=-1", "sa", "");
 
         Flyway flyway = new Flyway();
         flyway.setDataSource(dataSource);
-        flyway.init();
+        flyway.baseline();
 
         flyway.setLocations();
         assertEquals(1, flyway.info().all().length);
         assertEquals("1", flyway.info().current().getVersion().toString());
-        assertEquals(MigrationState.SUCCESS, flyway.info().current().getState());
+        assertEquals(MigrationState.BASELINE, flyway.info().current().getState());
     }
 
     @Test
-    public void initAgainWithSameVersion() throws Exception {
+    public void baselineAgainWithSameVersion() throws Exception {
         DriverDataSource dataSource =
                 new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_init_same;DB_CLOSE_DELAY=-1", "sa", "");
 
         Flyway flyway = new Flyway();
         flyway.setDataSource(dataSource);
         flyway.setLocations("migration/sql");
-        flyway.setInitVersion("0.5");
-        flyway.init();
-        flyway.init();
+        flyway.setBaselineVersionAsString("0.5");
+        flyway.baseline();
+        flyway.baseline();
 
         assertEquals(1, flyway.info().applied().length);
         MigrationInfo current = flyway.info().current();
         assertEquals("0.5", current.getVersion().toString());
-        assertEquals(MigrationType.INIT, current.getType());
-        assertEquals(MigrationState.SUCCESS, current.getState());
+        assertEquals(MigrationType.BASELINE, current.getType());
+        assertEquals(MigrationState.BASELINE, current.getState());
     }
 
     @Test(expected = FlywayException.class)
-    public void initAgainWithDifferentVersion() throws Exception {
+    public void baselineAgainWithDifferentVersion() throws Exception {
         DriverDataSource dataSource =
                 new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_init_different;DB_CLOSE_DELAY=-1", "sa", "");
 
         Flyway flyway = new Flyway();
         flyway.setDataSource(dataSource);
-        flyway.init();
+        flyway.baseline();
 
-        flyway.setInitVersion("2");
-        flyway.init();
+        flyway.setBaselineVersionAsString("2");
+        flyway.baseline();
+    }
+
+    @Test(expected = FlywayException.class)
+    public void cleanDisabled() throws Exception {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_clean_disabled;DB_CLOSE_DELAY=-1", "sa", "");
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+        try {
+            flyway.clean();
+        } catch (FlywayException e) {
+            fail("clean should succeed when cleanDisabled is false");
+        }
+        flyway.setCleanDisabled(true);
+        flyway.clean();
     }
 
     @Test
-    public void initOnMigrateOnCleanOnValidate() throws Exception {
+    public void cleanOnValidate() throws Exception {
         DriverDataSource dataSource =
-                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_init_validate;DB_CLOSE_DELAY=-1", "sa", "");
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_clean_validate;DB_CLOSE_DELAY=-1", "sa", "");
 
         Flyway flyway = new Flyway();
         flyway.setDataSource(dataSource);
@@ -195,6 +272,129 @@ public class FlywayMediumTest {
         flyway.migrate();
 
         assertEquals("1", flyway.info().current().getVersion().toString());
+    }
+
+    @Test
+    public void baselineAfterInit() throws Exception {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_baseline_init;DB_CLOSE_DELAY=-1", "sa", "");
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+        flyway.setSchemas("new1");
+        flyway.setLocations("migration/validate");
+        flyway.baseline();
+
+        new JdbcTemplate(dataSource.getConnection(), 0).executeStatement("UPDATE \"new1\".\"schema_version\" SET \"type\"='BASELINE' WHERE \"type\"='BASELINE'");
+        assertEquals("1", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.BASELINE, flyway.info().current().getType());
+
+        flyway.baseline();
+
+        assertEquals("1", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.BASELINE, flyway.info().current().getType());
+    }
+
+    @Test
+    public void baselineOnMigrate() throws Exception {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_baseline_migrate;DB_CLOSE_DELAY=-1", "sa", "");
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+        flyway.setSchemas("new1");
+        flyway.setLocations("migration/sql");
+        flyway.setBaselineVersionAsString("3");
+        flyway.migrate();
+
+        assertEquals("2.0", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.SQL, flyway.info().current().getType());
+
+        flyway.setTable("other_metadata");
+        flyway.setBaselineOnMigrate(true);
+        flyway.migrate();
+
+        assertEquals("3", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.BASELINE, flyway.info().current().getType());
+    }
+
+    @Test
+    public void baselineRepair() throws Exception {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_baseline_repair;DB_CLOSE_DELAY=-1", "sa", "");
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+        flyway.setSchemas("new1");
+        flyway.setLocations("migration/sql");
+        flyway.setBaselineVersionAsString("2");
+        flyway.baseline();
+
+        assertEquals("2", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.BASELINE, flyway.info().current().getType());
+
+        flyway.repair();
+
+        assertEquals("2", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.BASELINE, flyway.info().current().getType());
+
+        flyway.migrate();
+
+        assertEquals("2", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.BASELINE, flyway.info().current().getType());
+    }
+
+    @Test
+    public void baselineOnMigrateCheck() throws Exception {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_baseline_migrate_check;DB_CLOSE_DELAY=-1", "sa", "");
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+        flyway.setSchemas("new1");
+        flyway.setLocations("migration/sql");
+        flyway.setBaselineVersionAsString("3");
+        flyway.setBaselineOnMigrate(true);
+        flyway.migrate();
+
+        assertEquals("2.0", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.SQL, flyway.info().current().getType());
+    }
+
+    @Test
+    public void baselineOnMigrateSkipFailed() throws Exception {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_baseline_migrate_failed;DB_CLOSE_DELAY=-1", "sa", "");
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+        flyway.setSchemas("new1");
+        flyway.setLocations("migration/sql");
+        flyway.setBaselineVersionAsString("3");
+        flyway.migrate();
+
+        assertEquals("2.0", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.SQL, flyway.info().current().getType());
+
+        flyway.setTable("other_metadata");
+        flyway.setLocations("migration/failed");
+        flyway.setBaselineOnMigrate(true);
+        flyway.migrate();
+
+        assertEquals("3", flyway.info().current().getVersion().toString());
+        assertEquals(MigrationType.BASELINE, flyway.info().current().getType());
+    }
+
+    @Test
+    public void cleanUnknownSchema() throws Exception {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_db_clean_unknown;DB_CLOSE_DELAY=-1", "sa", "");
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+        flyway.setSchemas("new1");
+        flyway.clean();
+        flyway.clean();
     }
 
     @Test
@@ -223,11 +423,86 @@ public class FlywayMediumTest {
         flyway.setValidateOnMigrate(true);
         flyway.setTarget(MigrationVersion.LATEST);
         flyway.setOutOfOrder(true);
-        assertEquals(MigrationState.PENDING, flyway.info().all()[2].getState());
+        assertEquals(MigrationState.PENDING, flyway.info().all()[3].getState());
         assertEquals(2, flyway.migrate());
 
-        assertEquals(MigrationState.OUT_OF_ORDER, flyway.info().all()[2].getState());
+        MigrationInfo[] all = flyway.info().all();
+        assertEquals(MigrationState.OUT_OF_ORDER, all[3].getState());
         assertEquals(MigrationState.SUCCESS, flyway.info().all()[4].getState());
+    }
+
+    @Test
+    public void repeatable() {
+        DriverDataSource dataSource =
+                new DriverDataSource(Thread.currentThread().getContextClassLoader(), null, "jdbc:h2:mem:flyway_repeatable;DB_CLOSE_DELAY=-1", "sa", "");
+
+        Flyway flyway = new Flyway();
+        flyway.setDataSource(dataSource);
+        flyway.setTargetAsString("1.1");
+        flyway.setLocations("migration/sql", "migration/repeatable");
+        assertEquals(4, flyway.migrate());
+        assertEquals(0, flyway.info().pending().length);
+
+        MigrationInfo[] all = flyway.info().all();
+        assertEquals(MigrationState.SUCCESS, all[0].getState());
+        assertEquals(MigrationState.SUCCESS, all[1].getState());
+        assertEquals(MigrationState.SUCCESS, all[2].getState());
+        assertEquals(MigrationState.SUCCESS, all[3].getState());
+        assertEquals(MigrationState.ABOVE_TARGET, all[4].getState());
+        assertEquals(MigrationState.ABOVE_TARGET, all[5].getState());
+
+        flyway.setTarget(MigrationVersion.LATEST);
+        flyway.setLocations("migration/sql", "migration/repeatable2");
+        all = flyway.info().all();
+        assertEquals(MigrationState.SUCCESS, all[0].getState());
+        assertEquals(MigrationState.SUCCESS, all[1].getState());
+        assertEquals(MigrationState.OUTDATED, all[2].getState());
+        assertEquals(MigrationState.OUTDATED, all[3].getState());
+        assertEquals(MigrationState.PENDING, all[4].getState());
+        assertEquals(MigrationState.PENDING, all[5].getState());
+        assertEquals(MigrationState.PENDING, all[6].getState());
+        assertEquals(MigrationState.PENDING, all[7].getState());
+        assertNotNull(all[0].getVersion());
+        assertNotNull(all[1].getVersion());
+        assertNull(all[2].getVersion());
+        assertNull(all[3].getVersion());
+        assertNotNull(all[4].getVersion());
+        assertNotNull(all[5].getVersion());
+        assertNull(all[6].getVersion());
+        assertNull(all[7].getVersion());
+
+        assertEquals(4, flyway.info().pending().length);
+
+        assertEquals(4, flyway.migrate());
+        assertEquals(0, flyway.info().pending().length);
+        all = flyway.info().all();
+        assertEquals(MigrationState.SUCCESS, all[0].getState());
+        assertEquals(MigrationState.SUCCESS, all[1].getState());
+        assertEquals(MigrationState.SUPERSEEDED, all[2].getState());
+        assertEquals(MigrationState.SUPERSEEDED, all[3].getState());
+        assertEquals(MigrationState.SUCCESS, all[4].getState());
+        assertEquals(MigrationState.SUCCESS, all[5].getState());
+        assertEquals(MigrationState.SUCCESS, all[6].getState());
+        assertEquals(MigrationState.SUCCESS, all[7].getState());
+        assertNotNull(all[0].getVersion());
+        assertNotNull(all[1].getVersion());
+        assertNull(all[2].getVersion());
+        assertNull(all[3].getVersion());
+        assertNotNull(all[4].getVersion());
+        assertNotNull(all[5].getVersion());
+        assertNull(all[6].getVersion());
+        assertNull(all[7].getVersion());
+
+        assertEquals(0, flyway.migrate());
+    }
+
+    @Test
+    public void currentEmpty() {
+        Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_current_empty;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setTargetAsString("current");
+        assertEquals(0, flyway.migrate());
+        // Used to fail with NPE
     }
 
     @Test
@@ -241,6 +516,15 @@ public class FlywayMediumTest {
     }
 
     @Test
+    public void noPlaceholderReplacement() {
+        Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_no_placeholder_replacement;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/sql");
+        flyway.setPlaceholderReplacement(false);
+        assertEquals(4, flyway.migrate());
+    }
+
+    @Test
     public void futureMigrations() {
         Flyway flyway = new Flyway();
         flyway.setDataSource("jdbc:h2:mem:flyway_future;DB_CLOSE_DELAY=-1", "sa", "");
@@ -248,7 +532,21 @@ public class FlywayMediumTest {
         flyway.migrate();
 
         flyway.setLocations("migration/empty");
+        flyway.setValidateOnMigrate(true);
+        flyway.migrate();
         assertEquals(MigrationState.FUTURE_SUCCESS, flyway.info().applied()[0].getState());
+    }
+
+    @Test(expected = FlywayException.class)
+    public void futureMigrationsNotAllowed() {
+        Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_future_not_allowed;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/sql");
+        flyway.migrate();
+
+        flyway.setLocations("migration/empty");
+        flyway.setIgnoreFutureMigrations(false);
+        flyway.migrate();
     }
 
     @Test
@@ -258,6 +556,41 @@ public class FlywayMediumTest {
         flyway.setLocations("migration/sql");
         flyway.migrate();
         flyway.validate();
+    }
+
+    @Test(expected = FlywayException.class)
+    public void validateMissing() {
+        Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_validate_missing;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/sql", "migration/outoforder");
+        flyway.migrate();
+        flyway.setLocations("migration/sql");
+        flyway.migrate();
+    }
+
+    @Test
+    public void placeholderDisabled() {
+        Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_placeholder;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/placeholder");
+        flyway.setPlaceholderReplacement(false);
+        flyway.migrate();
+    }
+
+    @Test
+    public void noLocations() {
+        Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_locations;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations();
+        flyway.migrate();
+    }
+
+    @Test
+    public void invalidLocations() {
+        Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_invalid;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("abcd", "efgh");
+        flyway.migrate();
     }
 
     @Test
@@ -272,14 +605,14 @@ public class FlywayMediumTest {
             flyway.validate();
             fail();
         } catch (FlywayException e) {
-            //expected
+            assertTrue(e.getMessage().contains("not applied"));
         }
         flyway.setOutOfOrder(true);
         try {
             flyway.validate();
             fail();
         } catch (FlywayException e) {
-            //expected
+            assertTrue(e.getMessage().contains("not applied"));
         }
         flyway.migrate();
         flyway.validate();
@@ -299,6 +632,66 @@ public class FlywayMediumTest {
         flyway.setDataSource("jdbc:h2:mem:flyway_validate_pending;DB_CLOSE_DELAY=-1", "sa", "");
         flyway.setLocations("migration/sql");
         flyway.validate();
+    }
+    
+    @Test(expected = FlywayException.class)
+    public void validateWithPendingWithoutTarget() {
+    	// Populate database up to version 1.2
+    	Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_validate_pending;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/sql");
+        flyway.setTarget(MigrationVersion.fromVersion("1.2"));
+        flyway.migrate();
+        
+        // Validate migrations with pending migration 2.0 on classpath
+        flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_validate_pending;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/sql");
+        flyway.validate();
+    }
+    
+    @Test
+    public void validateWithPendingWithTarget() {
+    	// Populate database up to version 1.2
+    	Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_validate_pending;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/sql");
+        flyway.setTarget(MigrationVersion.fromVersion("1.2"));
+        flyway.migrate();
+        
+        // Validate migrations with pending migration 2.0 on classpath
+        flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_validate_pending;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/sql");
+        flyway.setTarget(MigrationVersion.CURRENT);
+        flyway.validate();    	
+    }
+    
+    @Test
+    public void migrateWithTargetCurrent() {
+    	// Populate database up to version 1.2
+    	Flyway flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_validate_pending;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/sql");
+        flyway.setTarget(MigrationVersion.fromVersion("1.2"));
+        flyway.migrate();
+        
+        assertEquals(4, flyway.info().all().length);
+        assertEquals(3, flyway.info().applied().length);
+        assertEquals(0, flyway.info().pending().length);
+        assertEquals(MigrationState.ABOVE_TARGET, flyway.info().all()[3].getState());
+        
+        // This should be a no-op as target=current will ignore future migrations 
+        flyway = new Flyway();
+        flyway.setDataSource("jdbc:h2:mem:flyway_validate_pending;DB_CLOSE_DELAY=-1", "sa", "");
+        flyway.setLocations("migration/sql");
+        flyway.setTarget(MigrationVersion.CURRENT);
+        flyway.migrate();
+        
+        assertEquals(4, flyway.info().all().length);
+        assertEquals(3, flyway.info().applied().length);
+        assertEquals(0, flyway.info().pending().length);
+        assertEquals(MigrationState.ABOVE_TARGET, flyway.info().all()[3].getState());
     }
 
     @Test

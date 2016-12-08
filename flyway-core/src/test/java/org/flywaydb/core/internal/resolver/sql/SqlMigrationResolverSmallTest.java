@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,29 +15,33 @@
  */
 package org.flywaydb.core.internal.resolver.sql;
 
-import org.flywaydb.core.api.FlywayException;
 import org.flywaydb.core.api.resolver.ResolvedMigration;
-import org.flywaydb.core.internal.util.scanner.classpath.ClassPathResource;
-import org.flywaydb.core.internal.util.scanner.filesystem.FileSystemResource;
+import org.flywaydb.core.internal.resolver.FlywayConfigurationForTests;
 import org.flywaydb.core.internal.util.Location;
 import org.flywaydb.core.internal.util.PlaceholderReplacer;
+import org.flywaydb.core.internal.util.scanner.Scanner;
+import org.flywaydb.core.internal.util.scanner.classpath.ClassPathResource;
+import org.flywaydb.core.internal.util.scanner.filesystem.FileSystemResource;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * Testcase for SqlMigration.
  */
 public class SqlMigrationResolverSmallTest {
+
+    private final Scanner scanner = new Scanner(Thread.currentThread().getContextClassLoader());
+
     @Test
     public void resolveMigrations() {
         SqlMigrationResolver sqlMigrationResolver =
-                new SqlMigrationResolver(null, Thread.currentThread().getContextClassLoader(),
-                        new Location("migration/subdir"), PlaceholderReplacer.NO_PLACEHOLDERS, "UTF-8", "V", "__", ".sql");
+                new SqlMigrationResolver(null, scanner,
+                        new Location("migration/subdir"), PlaceholderReplacer.NO_PLACEHOLDERS, FlywayConfigurationForTests.create());
         Collection<ResolvedMigration> migrations = sqlMigrationResolver.resolveMigrations();
 
         assertEquals(3, migrations.size());
@@ -55,19 +59,20 @@ public class SqlMigrationResolverSmallTest {
 
     @Test
     public void resolveMigrationsRoot() {
+        FlywayConfigurationForTests configuration = FlywayConfigurationForTests.createWithPrefix("CheckValidate");
+        configuration.setRepeatableSqlMigrationPrefix("X");
         SqlMigrationResolver sqlMigrationResolver =
-                new SqlMigrationResolver(null, Thread.currentThread().getContextClassLoader(), new Location(""),
-                        PlaceholderReplacer.NO_PLACEHOLDERS, "UTF-8", "CheckValidate", "__", ".sql");
+                new SqlMigrationResolver(null, scanner, new Location(""), PlaceholderReplacer.NO_PLACEHOLDERS, configuration);
 
-        assertEquals(1, sqlMigrationResolver.resolveMigrations().size());
+        // changed to 3 as new test cases are added for SybaseASE and DB2
+        assertEquals(3, sqlMigrationResolver.resolveMigrations().size());
     }
 
-    @Test(expected = FlywayException.class)
+    @Test
     public void resolveMigrationsNonExisting() {
         SqlMigrationResolver sqlMigrationResolver =
-                new SqlMigrationResolver(null, Thread.currentThread().getContextClassLoader(),
-                        new Location("non/existing"), PlaceholderReplacer.NO_PLACEHOLDERS, "UTF-8",
-                        "CheckValidate", "__", ".sql");
+                new SqlMigrationResolver(null, scanner,
+                        new Location("non/existing"), PlaceholderReplacer.NO_PLACEHOLDERS, FlywayConfigurationForTests.createWithPrefix("CheckValidate"));
 
         sqlMigrationResolver.resolveMigrations();
     }
@@ -75,8 +80,8 @@ public class SqlMigrationResolverSmallTest {
     @Test
     public void extractScriptName() {
         SqlMigrationResolver sqlMigrationResolver =
-                new SqlMigrationResolver(null, Thread.currentThread().getContextClassLoader(),
-                        new Location("db/migration"), PlaceholderReplacer.NO_PLACEHOLDERS, "UTF-8", "db_", "__", ".sql");
+                new SqlMigrationResolver(null, scanner,
+                        new Location("db/migration"), PlaceholderReplacer.NO_PLACEHOLDERS, FlywayConfigurationForTests.createWithPrefix("db_"));
 
         assertEquals("db_0__init.sql", sqlMigrationResolver.extractScriptName(
                 new ClassPathResource("db/migration/db_0__init.sql", Thread.currentThread().getContextClassLoader())));
@@ -85,8 +90,8 @@ public class SqlMigrationResolverSmallTest {
     @Test
     public void extractScriptNameRootLocation() {
         SqlMigrationResolver sqlMigrationResolver =
-                new SqlMigrationResolver(null, Thread.currentThread().getContextClassLoader(), new Location(""),
-                        PlaceholderReplacer.NO_PLACEHOLDERS, "UTF-8", "db_", "__", ".sql");
+                new SqlMigrationResolver(null, scanner, new Location(""),
+                        PlaceholderReplacer.NO_PLACEHOLDERS, FlywayConfigurationForTests.createWithPrefix("db_"));
 
         assertEquals("db_0__init.sql", sqlMigrationResolver.extractScriptName(
                 new ClassPathResource("db_0__init.sql", Thread.currentThread().getContextClassLoader())));
@@ -95,10 +100,21 @@ public class SqlMigrationResolverSmallTest {
     @Test
     public void extractScriptNameFileSystemPrefix() {
         SqlMigrationResolver sqlMigrationResolver =
-                new SqlMigrationResolver(null, Thread.currentThread().getContextClassLoader(),
-                        new Location("filesystem:/some/dir"), PlaceholderReplacer.NO_PLACEHOLDERS, "UTF-8",
-                        "V", "__", ".sql");
+                new SqlMigrationResolver(null, scanner,
+                        new Location("filesystem:/some/dir"), PlaceholderReplacer.NO_PLACEHOLDERS, FlywayConfigurationForTests.create());
 
         assertEquals("V3.171__patch.sql", sqlMigrationResolver.extractScriptName(new FileSystemResource("/some/dir/V3.171__patch.sql")));
+    }
+
+    @Test
+    public void isSqlCallback() {
+        assertTrue(SqlMigrationResolver.isSqlCallback("afterMigrate.sql", ".sql"));
+        assertFalse(SqlMigrationResolver.isSqlCallback("V1__afterMigrate.sql", ".sql"));
+    }
+
+    @Test
+    public void calculateChecksum() {
+        assertEquals(SqlMigrationResolver.calculateChecksum(null, "abc\ndef efg\nxyz"),
+                SqlMigrationResolver.calculateChecksum(null, "abc\r\ndef efg\nxyz\r\n"));
     }
 }

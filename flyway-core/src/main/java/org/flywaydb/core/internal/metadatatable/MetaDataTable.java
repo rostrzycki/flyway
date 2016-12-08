@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,15 +19,17 @@ import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.internal.dbsupport.Schema;
 
 import java.util.List;
+import java.util.concurrent.Callable;
 
 /**
  * The metadata table used to track all applied migrations.
  */
 public interface MetaDataTable {
     /**
-     * Acquires an exclusive read-write lock on the metadata table. This lock will be released automatically on commit.
+     * Acquires an exclusive read-write lock on the metadata table. This lock will be released automatically upon completion.
+     * @return The result of the action.
      */
-    void lock();
+    <T> T lock(Callable<T> callable);
 
     /**
      * Adds this migration as executed to the metadata table.
@@ -44,32 +46,32 @@ public interface MetaDataTable {
     boolean hasAppliedMigrations();
 
     /**
-     * @return The list of all migrations applied on the schema (oldest first). An empty list if no migration has been
-     * applied so far.
+     * @return The list of all migrations applied on the schema in the order they were applied (oldest first).
+     * An empty list if no migration has been applied so far.
      */
     List<AppliedMigration> allAppliedMigrations();
 
     /**
      * Creates and initializes the Flyway metadata table.
      *
-     * @param initVersion     The version to tag an existing schema with when executing init.
-     * @param initDescription The description to tag an existing schema with when executing init.
+     * @param initVersion     The version to tag an existing schema with when executing baseline.
+     * @param initDescription The description to tag an existing schema with when executing baseline.
      */
-    void addInitMarker(MigrationVersion initVersion, String initDescription);
+    void addBaselineMarker(MigrationVersion initVersion, String initDescription);
 
     /**
-     * Checks whether the metadata table contains a marker row for schema init.
+     * Checks whether the metadata table contains a marker row for schema baseline.
      *
      * @return {@code true} if it does, {@code false} if it doesn't.
      */
-    boolean hasInitMarker();
+    boolean hasBaselineMarker();
 
     /**
-     * Retrieves the init marker from the metadata table.
+     * Retrieves the baseline marker from the metadata table.
      *
-     * @return The init marker or {@code null} if none could be found.
+     * @return The baseline marker or {@code null} if none could be found.
      */
-    AppliedMigration getInitMarker();
+    AppliedMigration getBaselineMarker();
 
     /**
      * <p>
@@ -104,4 +106,11 @@ public interface MetaDataTable {
      * @param checksum The new checksum.
      */
     void updateChecksum(MigrationVersion version, Integer checksum);
+
+    /**
+     * Upgrades the Metadata table to Flyway 4.0 format if necessary.
+     *
+     * @return {@code true} if it was upgraded.
+     */
+    boolean upgradeIfNecessary();
 }

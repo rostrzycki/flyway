@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,10 +20,16 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class PostgreSQLDbSupportSmallTest {
+    private final PostgreSQLDbSupport dbSupport = new PostgreSQLDbSupport(null);
+
     @Test
     public void doQuote() {
-        PostgreSQLDbSupport dbSupport = new PostgreSQLDbSupport(null);
         assertEquals("\"abc\"", dbSupport.doQuote("abc"));
         assertEquals("\"a\"\"b\"\"c\"", dbSupport.doQuote("a\"b\"c"));
+    }
+
+    @Test
+    public void getFirstSchemaFromSearchPath() {
+        assertEquals("ABC", dbSupport.getFirstSchemaFromSearchPath("\"ABC\", def"));
     }
 }

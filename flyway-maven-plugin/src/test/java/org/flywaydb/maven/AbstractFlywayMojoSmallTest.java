@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,14 @@
  */
 package org.flywaydb.maven;
 
+import org.apache.maven.settings.DefaultMavenSettingsBuilder;
 import org.flywaydb.core.Flyway;
 import org.apache.maven.project.MavenProject;
 import org.h2.Driver;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.File;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
@@ -50,7 +53,9 @@ public class AbstractFlywayMojoSmallTest {
         mojo.driver = Driver.class.getName();
         mojo.url = "jdbc:h2:mem:dummy";
         mojo.user = "sa";
+        mojo.settings = new DefaultMavenSettingsBuilder().buildSettings();
         mojo.mavenProject = new MavenProject();
+        mojo.mavenProject.setBasedir(new File("."));
         mojo.mavenProject.getProperties().setProperty("flyway.schemas", "first,second");
         mojo.execute();
     }

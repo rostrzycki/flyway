@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +46,13 @@ public class MsSQLServerMigrationMediumTest extends SQLServerMigrationTestCase {
     @Test(expected = FlywayException.class)
     public void pkConstraints() throws Exception {
         flyway.setLocations("migration/dbsupport/sqlserver/sql/pkConstraint");
+        flyway.migrate();
+    }
+
+    @Ignore("No solution for this so far as it must be run outside of a transaction with no other transaction active in the system")
+    @Test
+    public void singleUser() throws Exception {
+        flyway.setLocations("migration/dbsupport/sqlserver/sql/singleUser");
         flyway.migrate();
     }
 }

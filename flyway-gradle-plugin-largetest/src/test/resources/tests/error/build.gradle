@@ -9,7 +9,7 @@ buildscript {
     }
 }
 
-apply plugin: 'flyway'
+apply plugin: 'org.flywaydb.flyway'
 apply plugin: 'java'
 apply plugin: 'maven'
 
@@ -29,7 +29,7 @@ flyway {
             'classpath:db.migration'
     ]
     placeholders = ['execUserName' : "${project.name}"]
-    initVersion = 0
+    baselineVersion = '0'
     target = '7'
 }
 
