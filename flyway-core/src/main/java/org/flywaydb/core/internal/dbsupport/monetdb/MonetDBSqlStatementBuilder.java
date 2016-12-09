@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -86,7 +86,6 @@ public class MonetDBSqlStatementBuilder extends SqlStatementBuilder {
         return StringUtils.replaceAll(noBackslashEscapes, "''", "");
     }
 
-    @Override
     protected String removeCharsetCasting(String token) {
         if (token.startsWith("_")) {
             for (String charSet : charSets) {
