@@ -92,7 +92,6 @@ public abstract class MonetDBMigrationTestCase extends MigrationTestCase {
         assertEquals(150, jdbcTemplate.queryForInt("SELECT value FROM v"));
 
         flyway.clean();
-        flyway.init(); // FIXME why???
 
         // Running migrate again on an unclean database, triggers duplicate object exceptions.
         flyway.migrate();
