@@ -86,7 +86,8 @@ public class MonetDBSqlStatementBuilder extends SqlStatementBuilder {
         return StringUtils.replaceAll(noBackslashEscapes, "''", "");
     }
 
-    protected String removeCharsetCasting(String token) {
+    @Override
+    protected String cleanToken(String token) {
         if (token.startsWith("_")) {
             for (String charSet : charSets) {
                 String cast = "_" + charSet;
