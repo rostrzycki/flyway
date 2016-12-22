@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import static org.junit.Assert.*;
 
 import org.flywaydb.core.internal.dbsupport.Delimiter;
 import org.junit.Test;
+import org.junit.Ignore;
 
 /**
  * Test for MySQLSqlStatementBuilder.
@@ -127,20 +128,20 @@ public class MonetDBSqlStatementBuilderSmallTest {
         assertTrue(builder.isTerminated());
     }
 
-    @Test
+    @Ignore
     public void stringEndingInDoubleQuote() throws Exception {
         builder.addLine("INSERT INTO Tablename (id) VALUES (' \"');");
         assertTrue(builder.isTerminated());
     }
 
-    @Test
+    @Ignore
     public void stringEndingInDoubleQuoteMultiple() throws Exception {
         builder.addLine("insert into sample_table_a(id, string)\n" +
                 "values (1, '[\"GIF\", \"JPG\", \"PNG\"]');");
         assertTrue(builder.isTerminated());
     }
 
-    @Test
+    @Ignore
     public void stringEndingInDoubleQuoteComplex() throws Exception {
         builder.addLine("UPDATE TABLE_A SET entity_version = 2, last_updated_timestamp = '2013-04-20 13:55:17', " +
                 "paragraph_text = 'Inauspicious. Isn\\'t that a great word? Let it roll off the tongue: in -awespish-us." +
@@ -201,7 +202,7 @@ public class MonetDBSqlStatementBuilderSmallTest {
         assertTrue(builder.isTerminated());
     }
 
-    @Test
+    @Ignore
     public void doubleQuotesInSingleQuotedStringLiteral() throws Exception {
         builder.addLine("INSERT INTO Tablename (id) VALUES (',\"a\"a'),(' \"a\"a'),(' \"\"'),('\" \"\"'),(' \" '),(' \"'),('\" ');");
         assertTrue(builder.isTerminated());

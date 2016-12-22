@@ -22,6 +22,8 @@ object FlywayPluginBuild extends Build {
 
   val pom = XML.load(Source.fromFile(new File("../pom.xml")))
   val flywayVersion = (pom \ "version").text
+  val pom2 = XML.load(Source.fromFile(new File("pom.xml")))
+  val sVers = (pom2 \ "properties" \ "scalaVersion").text+".1"
 
   lazy val project = Project (
     "project",
@@ -31,6 +33,7 @@ object FlywayPluginBuild extends Build {
       name := "flyway-sbt",
       organization := "org.flywaydb",
       version := flywayVersion,
+      scalaVersion := sVers,
       resolvers += (
         "Local Maven Repository" at Path.userHome.asFile.toURI.toURL + ".m2/repository"
         ),
