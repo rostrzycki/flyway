@@ -4,6 +4,6 @@ organization := "org.flywaydb"
 
 version := "0.0.1-SNAPSHOT"
 
-sbtPlugin := true
+scalaVersion := "2.10.1"
 
-publishMavenStyle := true
+sbtPlugin := true

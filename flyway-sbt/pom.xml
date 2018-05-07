@@ -72,7 +72,7 @@
                 </executions>
                 <configuration>
                     <executable>java</executable>
-                    <commandlineArgs>-XX:MaxPermSize=256M -Xmx512M -jar sbt-launch.jar publishM2 publishLocal</commandlineArgs>
+                    <commandlineArgs>-XX:MaxPermSize=256M -Xmx512M -jar sbt-launch.jar publishLocal</commandlineArgs>
                 </configuration>
             </plugin>
             <plugin>
