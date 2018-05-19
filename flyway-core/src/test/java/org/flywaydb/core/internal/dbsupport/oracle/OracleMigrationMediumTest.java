@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -111,6 +111,12 @@ public class OracleMigrationMediumTest extends MigrationTestCase {
         flyway.migrate();
     }
 
+    @Test
+    public void count() throws FlywayException {
+        flyway.setLocations("migration/dbsupport/oracle/sql/count");
+        flyway.migrate();
+    }
+
     /**
      * Tests parsing of object names that contain keywords such as MY_TABLE.
      */
@@ -159,6 +165,18 @@ public class OracleMigrationMediumTest extends MigrationTestCase {
      */
     private int recycleBinCount() throws Exception {
         return jdbcTemplate.queryForInt("select count(*) from recyclebin");
+    }
+
+    /**
+     * Tests cleaning up after DBMS_SCHEDULE.CREATE_JOB
+     */
+    @Test
+    public void createScheduledJob() throws Exception {
+        flyway.setLocations("migration/dbsupport/oracle/sql/scheduled_job");
+        flyway.migrate();
+        assertEquals(1, jdbcTemplate.queryForInt("select count(*) from user_scheduler_jobs where job_name='TEST_JOB'"));
+        flyway.clean();
+        assertEquals(0, jdbcTemplate.queryForInt("select count(*) from user_scheduler_jobs where job_name='TEST_JOB'"));
     }
 
     /**
@@ -269,6 +287,17 @@ public class OracleMigrationMediumTest extends MigrationTestCase {
         flyway.migrate();
     }
 
+    @Test
+    public void commentOracle() throws Exception {
+        flyway.setLocations("migration/dbsupport/oracle/sql/comment");
+        assertEquals(3, flyway.migrate());
+
+        String statusWithComment = jdbcTemplate.queryForString( "select ob.STATUS from user_objects ob where ob.OBJECT_NAME = 'PERSON_WITH_COMMENT' " );
+        String statusWithoutComment = jdbcTemplate.queryForString( "select ob.STATUS from user_objects ob where ob.OBJECT_NAME = 'PERSON_WITHOUT_COMMENT' " );
+        assertEquals( "VALID", statusWithoutComment );
+        assertEquals( "VALID", statusWithComment );
+    }
+
     /**
      * Tests support for clean together with XML Type.
      */
@@ -312,19 +341,29 @@ public class OracleMigrationMediumTest extends MigrationTestCase {
     @Ignore("Disabled due to missing functionality in Oracle XE.")
     @Test
     public void javaSource() throws FlywayException, SQLException {
-        flyway.setLocations("org/flywaydb/core/dbsupport/oracle/sql/javaSource");
-
+        flyway.setLocations("migration/dbsupport/oracle/sql/javasource");
         flyway.migrate();
-        assertTrue(isExistMyJavaSource());
-
         flyway.clean();
-        assertFalse(isExistMyJavaSource());
     }
 
-    private boolean isExistMyJavaSource() throws SQLException {
-        String query = "SELECT count(*) FROM all_objects WHERE object_name = ? AND owner = ?";
-        String objectName = "MyJavaSource";
-        String owner = flyway.getSchemas()[0];
-        return jdbcTemplate.queryForInt(query, objectName, owner) != 0;
+    @Override
+    protected void createFlyway3MetadataTable() throws Exception {
+        jdbcTemplate.execute("CREATE TABLE \"schema_version\" (\n" +
+                "    \"version_rank\" INT NOT NULL,\n" +
+                "    \"installed_rank\" INT NOT NULL,\n" +
+                "    \"version\" VARCHAR2(50) NOT NULL,\n" +
+                "    \"description\" VARCHAR2(200) NOT NULL,\n" +
+                "    \"type\" VARCHAR2(20) NOT NULL,\n" +
+                "    \"script\" VARCHAR2(1000) NOT NULL,\n" +
+                "    \"checksum\" INT,\n" +
+                "    \"installed_by\" VARCHAR2(100) NOT NULL,\n" +
+                "    \"installed_on\" TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,\n" +
+                "    \"execution_time\" INT NOT NULL,\n" +
+                "    \"success\" NUMBER(1) NOT NULL\n" +
+                ")");
+        jdbcTemplate.execute("ALTER TABLE \"schema_version\" ADD CONSTRAINT \"schema_version_pk\" PRIMARY KEY (\"version\")");
+        jdbcTemplate.execute("CREATE INDEX \"schema_version_vr_idx\" ON \"schema_version\" (\"version_rank\")");
+        jdbcTemplate.execute("CREATE INDEX \"schema_version_ir_idx\" ON \"schema_version\" (\"installed_rank\")");
+        jdbcTemplate.execute("CREATE INDEX \"schema_version_s_idx\" ON \"schema_version\" (\"success\")");
     }
 }

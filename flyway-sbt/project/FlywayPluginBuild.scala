@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,24 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import sbt.Keys._
 import sbt._
-import scala._
-import Keys._
-import scala.xml.{XML, Source}
+
+import scala.xml.{Source, XML}
 
 object FlywayPluginBuild extends Build {
 
   val pom = XML.load(Source.fromFile(new File("../pom.xml")))
   val flywayVersion = (pom \ "version").text
+  val pom2 = XML.load(Source.fromFile(new File("pom.xml")))
+  val sVers = (pom2 \ "properties" \ "scalaVersion").text+".1"
 
   lazy val project = Project (
     "project",
     file ("."),
-    settings = Defaults.defaultSettings ++ Seq(
+    settings = Defaults.coreDefaultSettings ++ Seq(
       sbtPlugin := true,
       name := "flyway-sbt",
       organization := "org.flywaydb",
       version := flywayVersion,
+      scalaVersion := sVers,
       resolvers += (
         "Local Maven Repository" at Path.userHome.asFile.toURI.toURL + ".m2/repository"
         ),

@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package org.flywaydb.core.internal.resolver;
 
 import org.flywaydb.core.api.FlywayException;
+import org.flywaydb.core.api.configuration.FlywayConfiguration;
 import org.flywaydb.core.api.resolver.MigrationResolver;
 import org.flywaydb.core.api.resolver.ResolvedMigration;
 import org.flywaydb.core.internal.dbsupport.DbSupport;
@@ -26,6 +27,7 @@ import org.flywaydb.core.internal.util.FeatureDetector;
 import org.flywaydb.core.internal.util.Location;
 import org.flywaydb.core.internal.util.Locations;
 import org.flywaydb.core.internal.util.PlaceholderReplacer;
+import org.flywaydb.core.internal.util.scanner.Scanner;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -55,27 +57,23 @@ public class CompositeMigrationResolver implements MigrationResolver {
      * Creates a new CompositeMigrationResolver.
      *
      * @param dbSupport                The database-specific support.
-     * @param classLoader              The ClassLoader for loading migrations on the classpath.
+     * @param scanner                  The Scanner for loading migrations on the classpath.
+     * @param configuration            The Flyway configuration.
      * @param locations                The locations where migrations are located.
-     * @param encoding                 The encoding of Sql migrations.
-     * @param sqlMigrationPrefix       The file name prefix for sql migrations.
-     * @param sqlMigrationSeparator    The file name separator for sql migrations.
-     * @param sqlMigrationSuffix       The file name suffix for sql migrations.
      * @param placeholderReplacer      The placeholder replacer to use.
      * @param customMigrationResolvers Custom Migration Resolvers.
      */
-    public CompositeMigrationResolver(DbSupport dbSupport, ClassLoader classLoader, Locations locations,
-                                      String encoding,
-                                      String sqlMigrationPrefix, String sqlMigrationSeparator, String sqlMigrationSuffix,
+    public CompositeMigrationResolver(DbSupport dbSupport, Scanner scanner, FlywayConfiguration configuration, Locations locations,
                                       PlaceholderReplacer placeholderReplacer,
                                       MigrationResolver... customMigrationResolvers) {
-        for (Location location : locations.getLocations()) {
-            migrationResolvers.add(new SqlMigrationResolver(dbSupport, classLoader, location, placeholderReplacer,
-                    encoding, sqlMigrationPrefix, sqlMigrationSeparator, sqlMigrationSuffix));
-            migrationResolvers.add(new JdbcMigrationResolver(classLoader, location));
+        if (!configuration.isSkipDefaultResolvers()) {
+            for (Location location : locations.getLocations()) {
+                migrationResolvers.add(new SqlMigrationResolver(dbSupport, scanner, location, placeholderReplacer, configuration));
+                migrationResolvers.add(new JdbcMigrationResolver(scanner, location, configuration));
 
-            if (new FeatureDetector(classLoader).isSpringJdbcAvailable()) {
-                migrationResolvers.add(new SpringJdbcMigrationResolver(classLoader, location));
+                if (new FeatureDetector(scanner.getClassLoader()).isSpringJdbcAvailable()) {
+                    migrationResolvers.add(new SpringJdbcMigrationResolver(scanner, location, configuration));
+                }
             }
         }
 
@@ -140,13 +138,21 @@ public class CompositeMigrationResolver implements MigrationResolver {
         for (int i = 0; i < migrations.size() - 1; i++) {
             ResolvedMigration current = migrations.get(i);
             ResolvedMigration next = migrations.get(i + 1);
-            if (current.getVersion().compareTo(next.getVersion()) == 0) {
-                throw new FlywayException(String.format("Found more than one migration with version '%s' (Offenders: %s '%s' and %s '%s')",
-                        current.getVersion(),
-                        current.getType(),
+            if (new ResolvedMigrationComparator().compare(current, next) == 0) {
+                if (current.getVersion() != null) {
+                    throw new FlywayException(String.format("Found more than one migration with version %s\nOffenders:\n-> %s (%s)\n-> %s (%s)",
+                            current.getVersion(),
+                            current.getPhysicalLocation(),
+                            current.getType(),
+                            next.getPhysicalLocation(),
+                            next.getType()));
+                }
+                throw new FlywayException(String.format("Found more than one repeatable migration with description %s\nOffenders:\n-> %s (%s)\n-> %s (%s)",
+                        current.getDescription(),
                         current.getPhysicalLocation(),
-                        next.getType(),
-                        next.getPhysicalLocation()));
+                        current.getType(),
+                        next.getPhysicalLocation(),
+                        next.getType()));
             }
         }
     }

@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,10 +33,10 @@ import org.flywaydb.core.internal.util.scanner.classpath.ClassPathResource;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * Supports reading and writing to the metadata table.
@@ -71,6 +71,25 @@ public class MetaDataTableImpl implements MetaDataTable {
         this.table = table;
     }
 
+    @Override
+    public boolean upgradeIfNecessary() {
+        if (table.exists() && table.hasColumn("version_rank")) {
+            LOG.info("Upgrading metadata table " + table + " to the Flyway 4.0 format ...");
+            String resourceName = "org/flywaydb/core/internal/dbsupport/" + dbSupport.getDbName() + "/upgradeMetaDataTable.sql";
+            String source = new ClassPathResource(resourceName, getClass().getClassLoader()).loadAsString("UTF-8");
+
+            Map<String, String> placeholders = new HashMap<String, String>();
+            placeholders.put("schema", table.getSchema().getName());
+            placeholders.put("table", table.getName());
+            String sourceNoPlaceholders = new PlaceholderReplacer(placeholders, "${", "}").replacePlaceholders(source);
+
+            SqlScript sqlScript = new SqlScript(sourceNoPlaceholders, dbSupport);
+            sqlScript.execute(jdbcTemplate);
+            return true;
+        }
+        return false;
+    }
+
     /**
      * Creates the metatable if it doesn't exist, upgrades it if it does.
      */
@@ -96,9 +115,9 @@ public class MetaDataTableImpl implements MetaDataTable {
     }
 
     @Override
-    public void lock() {
+    public <T> T lock(Callable<T> callable) {
         createIfNotExists();
-        table.lock();
+        return dbSupport.lock(table, callable);
     }
 
     @Override
@@ -106,35 +125,63 @@ public class MetaDataTableImpl implements MetaDataTable {
         createIfNotExists();
 
         MigrationVersion version = appliedMigration.getVersion();
-        try {
-            int versionRank = calculateVersionRank(version);
 
-            jdbcTemplate.update("UPDATE " + table
-                    + " SET " + dbSupport.quote("version_rank") + " = " + dbSupport.quote("version_rank")
-                    + " + 1 WHERE " + dbSupport.quote("version_rank") + " >= ?", versionRank);
-            jdbcTemplate.update("INSERT INTO " + table
-                            + " (" + dbSupport.quote("version_rank")
-                            + "," + dbSupport.quote("installed_rank")
-                            + "," + dbSupport.quote("version")
-                            + "," + dbSupport.quote("description")
-                            + "," + dbSupport.quote("type")
-                            + "," + dbSupport.quote("script")
-                            + "," + dbSupport.quote("checksum")
-                            + "," + dbSupport.quote("installed_by")
-                            + "," + dbSupport.quote("execution_time")
-                            + "," + dbSupport.quote("success")
-                            + ")"
-                            + " VALUES (?, ?, ?, ?, ?, ?, ?, " + dbSupport.getCurrentUserFunction() + ", ?, ?)",
-                    versionRank,
-                    calculateInstalledRank(),
-                    version.toString(),
-                    appliedMigration.getDescription(),
-                    appliedMigration.getType().name(),
-                    appliedMigration.getScript(),
-                    appliedMigration.getChecksum(),
-                    appliedMigration.getExecutionTime(),
-                    appliedMigration.isSuccess()
-            );
+        try {
+            String versionStr = version == null ? null : version.toString();
+
+            // Try load an updateMetaDataTable.sql file if it exists
+            String resourceName = "org/flywaydb/core/internal/dbsupport/" + dbSupport.getDbName() + "/updateMetaDataTable.sql";
+            ClassPathResource classPathResource = new ClassPathResource(resourceName, getClass().getClassLoader());
+            int installedRank = calculateInstalledRank();
+            if (classPathResource.exists()) {
+                String source = classPathResource.loadAsString("UTF-8");
+                Map<String, String> placeholders = new HashMap<String, String>();
+
+                // Placeholders for schema and table
+                placeholders.put("schema", table.getSchema().getName());
+                placeholders.put("table", table.getName());
+
+                // Placeholders for column values
+                placeholders.put("installed_rank_val", String.valueOf(installedRank));
+                placeholders.put("version_val", versionStr);
+                placeholders.put("description_val", appliedMigration.getDescription());
+                placeholders.put("type_val", appliedMigration.getType().name());
+                placeholders.put("script_val", appliedMigration.getScript());
+                placeholders.put("checksum_val", String.valueOf(appliedMigration.getChecksum()));
+                placeholders.put("installed_by_val", dbSupport.getCurrentUserFunction());
+                placeholders.put("execution_time_val", String.valueOf(appliedMigration.getExecutionTime() * 1000L));
+                placeholders.put("success_val", String.valueOf(appliedMigration.isSuccess()));
+
+                String sourceNoPlaceholders = new PlaceholderReplacer(placeholders, "${", "}").replacePlaceholders(source);
+
+                SqlScript sqlScript = new SqlScript(sourceNoPlaceholders, dbSupport);
+
+                sqlScript.execute(jdbcTemplate);
+            } else {
+                // Fall back to hard-coded statements
+                jdbcTemplate.update("INSERT INTO " + table
+                                + " (" + dbSupport.quote("installed_rank")
+                                + "," + dbSupport.quote("version")
+                                + "," + dbSupport.quote("description")
+                                + "," + dbSupport.quote("type")
+                                + "," + dbSupport.quote("script")
+                                + "," + dbSupport.quote("checksum")
+                                + "," + dbSupport.quote("installed_by")
+                                + "," + dbSupport.quote("execution_time")
+                                + "," + dbSupport.quote("success")
+                                + ")"
+                                + " VALUES (?, ?, ?, ?, ?, ?, " + dbSupport.getCurrentUserFunction() + ", ?, ?)",
+                        installedRank,
+                        versionStr,
+                        appliedMigration.getDescription(),
+                        appliedMigration.getType().name(),
+                        appliedMigration.getScript(),
+                        appliedMigration.getChecksum(),
+                        appliedMigration.getExecutionTime(),
+                        appliedMigration.isSuccess()
+                );
+            }
+
             LOG.debug("MetaData table " + table + " successfully updated to reflect changes");
         } catch (SQLException e) {
         	LOG.error(e.getMessage(), e);
@@ -151,31 +198,6 @@ public class MetaDataTableImpl implements MetaDataTable {
         int currentMax = jdbcTemplate.queryForInt("SELECT MAX(" + dbSupport.quote("installed_rank") + ")"
                 + " FROM " + table);
         return currentMax + 1;
-    }
-
-    /**
-     * Calculate the rank for this new version about to be inserted.
-     *
-     * @param version The version to calculated for.
-     * @return The rank.
-     */
-    private int calculateVersionRank(MigrationVersion version) throws SQLException {
-        List<String> versions = jdbcTemplate.queryForStringList("select " + dbSupport.quote("version") + " from " + table);
-
-        List<MigrationVersion> migrationVersions = new ArrayList<MigrationVersion>();
-        for (String versionStr : versions) {
-            migrationVersions.add(MigrationVersion.fromVersion(versionStr));
-        }
-
-        Collections.sort(migrationVersions);
-
-        for (int i = 0; i < migrationVersions.size(); i++) {
-            if (version.compareTo(migrationVersions.get(i)) < 0) {
-                return i + 1;
-            }
-        }
-
-        return migrationVersions.size() + 1;
     }
 
     @Override
@@ -196,8 +218,7 @@ public class MetaDataTableImpl implements MetaDataTable {
 
         createIfNotExists();
 
-        String query = "SELECT " + dbSupport.quote("version_rank")
-                + "," + dbSupport.quote("installed_rank")
+        String query = "SELECT " + dbSupport.quote("installed_rank")
                 + "," + dbSupport.quote("version")
                 + "," + dbSupport.quote("description")
                 + "," + dbSupport.quote("type")
@@ -220,7 +241,7 @@ public class MetaDataTableImpl implements MetaDataTable {
             query += ")";
         }
 
-        query += " ORDER BY " + dbSupport.quote("version_rank");
+        query += " ORDER BY " + dbSupport.quote("installed_rank");
 
         try {
             return jdbcTemplate.query(query, new RowMapper<AppliedMigration>() {
@@ -231,9 +252,8 @@ public class MetaDataTableImpl implements MetaDataTable {
                     }
 
                     return new AppliedMigration(
-                            rs.getInt("version_rank"),
                             rs.getInt("installed_rank"),
-                            MigrationVersion.fromVersion(rs.getString("version")),
+                            rs.getString("version") != null ? MigrationVersion.fromVersion(rs.getString("version")) : null,
                             rs.getString("description"),
                             MigrationType.valueOf(rs.getString("type")),
                             rs.getString("script"),
@@ -252,8 +272,8 @@ public class MetaDataTableImpl implements MetaDataTable {
     }
 
     @Override
-    public void addInitMarker(final MigrationVersion initVersion, final String initDescription) {
-        addAppliedMigration(new AppliedMigration(initVersion, initDescription, MigrationType.INIT, initDescription, null,
+    public void addBaselineMarker(final MigrationVersion baselineVersion, final String baselineDescription) {
+        addAppliedMigration(new AppliedMigration(baselineVersion, baselineDescription, MigrationType.BASELINE, baselineDescription, null,
                 0, true));
     }
 
@@ -311,7 +331,7 @@ public class MetaDataTableImpl implements MetaDataTable {
     }
 
     @Override
-    public boolean hasInitMarker() {
+    public boolean hasBaselineMarker() {
         if (!table.exists()) {
             return false;
         }
@@ -320,16 +340,16 @@ public class MetaDataTableImpl implements MetaDataTable {
 
         try {
             int count = jdbcTemplate.queryForInt(
-                    "SELECT COUNT(*) FROM " + table + " WHERE " + dbSupport.quote("type") + "='INIT'");
+                    "SELECT COUNT(*) FROM " + table + " WHERE " + dbSupport.quote("type") + "='INIT' OR " + dbSupport.quote("type") + "='BASELINE'");
             return count > 0;
         } catch (SQLException e) {
-            throw new FlywayException("Unable to check whether the metadata table " + table + " has an init marker migration", e);
+            throw new FlywayException("Unable to check whether the metadata table " + table + " has an baseline marker migration", e);
         }
     }
 
     @Override
-    public AppliedMigration getInitMarker() {
-        List<AppliedMigration> appliedMigrations = findAppliedMigrations(MigrationType.INIT);
+    public AppliedMigration getBaselineMarker() {
+        List<AppliedMigration> appliedMigrations = findAppliedMigrations(MigrationType.BASELINE);
         return appliedMigrations.isEmpty() ? null : appliedMigrations.get(0);
     }
 
@@ -343,7 +363,7 @@ public class MetaDataTableImpl implements MetaDataTable {
 
         try {
             int count = jdbcTemplate.queryForInt(
-                    "SELECT COUNT(*) FROM " + table + " WHERE " + dbSupport.quote("type") + " NOT IN ('SCHEMA', 'INIT')");
+                    "SELECT COUNT(*) FROM " + table + " WHERE " + dbSupport.quote("type") + " NOT IN ('SCHEMA', 'INIT', 'BASELINE')");
             return count > 0;
         } catch (SQLException e) {
             throw new FlywayException("Unable to check whether the metadata table " + table + " has applied migrations", e);
@@ -353,12 +373,35 @@ public class MetaDataTableImpl implements MetaDataTable {
     @Override
     public void updateChecksum(MigrationVersion version, Integer checksum) {
         LOG.info("Updating checksum of " + version + " to " + checksum + " ...");
+
+        // Try load an updateChecksum.sql file if it exists
         try {
-            jdbcTemplate.update("UPDATE " + table + " SET " + dbSupport.quote("checksum") + "=" + checksum
-                    + " WHERE " + dbSupport.quote("version") + "='" + version + "'");
-        } catch (SQLException e) {
-            throw new FlywayException("Unable to update checksum in metadata table " + table
-                    + " for version " + version + " to " + checksum, e);
+            String resourceName = "org/flywaydb/core/internal/dbsupport/" + dbSupport.getDbName() + "/updateChecksum.sql";
+            String source = new ClassPathResource(resourceName, getClass().getClassLoader()).loadAsString("UTF-8");
+            Map<String, String> placeholders = new HashMap<String, String>();
+
+            // Placeholders for column names
+            placeholders.put("schema", table.getSchema().getName());
+            placeholders.put("table", table.getName());
+
+            // Placeholders for column values
+            placeholders.put("version_val", version.toString());
+            placeholders.put("checksum_val", String.valueOf(checksum));
+
+            String sourceNoPlaceholders = new PlaceholderReplacer(placeholders, "${", "}").replacePlaceholders(source);
+
+            SqlScript sqlScript = new SqlScript(sourceNoPlaceholders, dbSupport);
+
+            sqlScript.execute(jdbcTemplate);
+
+        } catch (FlywayException fe) {
+            try {
+                jdbcTemplate.update("UPDATE " + table + " SET " + dbSupport.quote("checksum") + "=" + checksum
+                        + " WHERE " + dbSupport.quote("version") + "='" + version + "'");
+            } catch (SQLException e) {
+                throw new FlywayException("Unable to update checksum in metadata table " + table
+                        + " for version " + version + " to " + checksum, e);
+            }
         }
     }
 

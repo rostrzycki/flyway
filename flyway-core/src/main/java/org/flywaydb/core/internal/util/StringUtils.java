@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -146,11 +146,11 @@ public class StringUtils {
      * Turns this string array in one comma-delimited string.
      *
      * @param strings The array to process.
-     * @return The new comma-delimited string. An empty string if {@code strings} is {@code null}.
+     * @return The new comma-delimited string. An empty string if {@code strings} is empty. {@code null} if strings is {@code null}.
      */
     public static String arrayToCommaDelimitedString(Object[] strings) {
         if (strings == null) {
-            return "";
+            return null;
         }
 
         StringBuilder builder = new StringBuilder();

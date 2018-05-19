@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,8 +48,8 @@ public class GradleLargeTest {
 
     @Test
     public void error() throws Exception {
-        String stdOut = runGradle(1, "error", "clean", "flywayMigrate");
-        assertTrue(stdOut.contains("Unable to determine URL for classpath location"));
+        String stdOut = runGradle(0, "error", "clean", "flywayMigrate");
+        assertTrue(stdOut.contains("Successfully validated 0 migrations"));
     }
 
     /**
@@ -65,7 +65,7 @@ public class GradleLargeTest {
         String flywayVersion = System.getProperty("flywayVersion", getPomVersion());
 
         String extension = "";
-        if (System.getProperty("os.name").startsWith("Windows")) {
+        if (isWindowsOs()) {
             extension = ".bat";
         }
 
@@ -73,8 +73,10 @@ public class GradleLargeTest {
         addShellIfNeeded(args);
         args.add(installDir + "/install/gradlew" + extension);
         args.add("-PflywayVersion=" + flywayVersion);
-        args.add("--info");
-        //args.add("--stacktrace");
+        //args.add("--debug");
+        args.add("--stacktrace");
+        args.add("--no-daemon");
+        args.add("-i");
         args.add("-b");
         args.add(installDir + "/tests/" + dir + "/build.gradle");
         args.addAll(Arrays.asList(extraArgs));

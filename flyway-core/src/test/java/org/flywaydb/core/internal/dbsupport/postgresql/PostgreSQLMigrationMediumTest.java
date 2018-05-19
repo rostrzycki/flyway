@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,11 @@ package org.flywaydb.core.internal.dbsupport.postgresql;
 
 import org.flywaydb.core.DbCategory;
 import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationType;
-import org.flywaydb.core.api.MigrationVersion;
-import org.flywaydb.core.api.resolver.MigrationExecutor;
-import org.flywaydb.core.api.resolver.MigrationResolver;
-import org.flywaydb.core.api.resolver.ResolvedMigration;
-import org.flywaydb.core.migration.MigrationTestCase;
+import org.flywaydb.core.api.FlywayException;
 import org.flywaydb.core.internal.util.jdbc.DriverDataSource;
 import org.flywaydb.core.internal.util.jdbc.JdbcUtils;
+import org.flywaydb.core.migration.MigrationTestCase;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
@@ -32,12 +29,11 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
 import java.util.Properties;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
 
 /**
  * Test to demonstrate the migration functionality using PostgreSQL.
@@ -79,88 +75,26 @@ public class PostgreSQLMigrationMediumTest extends MigrationTestCase {
     @Test
     public void vacuum() throws Exception {
         flyway.setLocations("migration/dbsupport/postgresql/sql/vacuum");
-        flyway.setResolvers(new NoTransactionMigrationResolver(new String[][]{
-                {"2.0", "Vacuum without transaction", "vacuum-notrans", "VACUUM t"}
-        }));
+        try {
+            flyway.migrate();
+        } catch (FlywayException e) {
+            assertThat(e.getMessage(), containsString("non-transactional"));
+        }
+        flyway.setAllowMixedMigrations(true);
         flyway.migrate();
     }
 
-    private class NoTransactionMigrationResolver implements MigrationResolver {
-        private final String[][] data;
-
-        private NoTransactionMigrationResolver(String[][] data) {
-            this.data = data;
-        }
-
-        @Override
-        public Collection<ResolvedMigration> resolveMigrations() {
-            List<ResolvedMigration> resolvedMigrations = new ArrayList<ResolvedMigration>();
-            for (String[] migrationData : data) {
-                resolvedMigrations.add(new NoTransactionResolvedMigration(migrationData));
-            }
-            return resolvedMigrations;
-        }
+    @Test
+    public void index() throws Exception {
+        flyway.setLocations("migration/dbsupport/postgresql/sql/index");
+        flyway.setAllowMixedMigrations(true);
+        flyway.migrate();
     }
 
-    private class NoTransactionResolvedMigration implements ResolvedMigration {
-        private final String[] data;
-
-        private NoTransactionResolvedMigration(String[] data) {
-            this.data = data;
-        }
-
-        @Override
-        public MigrationVersion getVersion() {
-            return MigrationVersion.fromVersion(data[0]);
-        }
-
-        @Override
-        public String getDescription() {
-            return data[1];
-        }
-
-        @Override
-        public String getScript() {
-            return data[2];
-        }
-
-        @Override
-        public Integer getChecksum() {
-            return data[3].hashCode();
-        }
-
-        @Override
-        public MigrationType getType() {
-            return MigrationType.CUSTOM;
-        }
-
-        @Override
-        public String getPhysicalLocation() {
-            return null;
-        }
-
-        @Override
-        public MigrationExecutor getExecutor() {
-            return new NoTransactionMigrationExecutor(data[3]);
-        }
-    }
-
-    private class NoTransactionMigrationExecutor implements MigrationExecutor {
-        private final String data;
-
-        private NoTransactionMigrationExecutor(String data) {
-            this.data = data;
-        }
-
-        @Override
-        public void execute(Connection connection) throws SQLException {
-            jdbcTemplate.executeStatement(data);
-        }
-
-        @Override
-        public boolean executeInTransaction() {
-            return false;
-        }
+    @Test
+    public void cleanUnknown() throws Exception {
+        flyway.setSchemas("non-existant");
+        flyway.clean();
     }
 
     /**
@@ -219,6 +153,21 @@ public class PostgreSQLMigrationMediumTest extends MigrationTestCase {
         flyway.migrate();
 
         assertEquals(150, jdbcTemplate.queryForInt("SELECT value FROM \"\"\"v\"\"\""));
+
+        flyway.clean();
+
+        // Running migrate again on an unclean database, triggers duplicate object exceptions.
+        flyway.migrate();
+    }
+
+    /**
+     * Tests clean and migrate for PostgreSQL Materialized Views.
+     */
+    @Ignore("PostgreSQL 9.3 and newer only")
+    @Test
+    public void materializedview() throws Exception {
+        flyway.setLocations("migration/dbsupport/postgresql/sql/materializedview");
+        flyway.migrate();
 
         flyway.clean();
 
@@ -307,6 +256,16 @@ public class PostgreSQLMigrationMediumTest extends MigrationTestCase {
     }
 
     /**
+     * Tests support for COPY FROM STDIN statements generated by pg_dump..
+     */
+    @Test
+    public void copy() throws Exception {
+        flyway.setLocations("migration/dbsupport/postgresql/sql/copy");
+        flyway.migrate();
+        assertEquals(6, jdbcTemplate.queryForInt("select count(*) from copy_test"));
+    }
+
+    /**
      * Tests that the lock on SCHEMA_VERSION is not blocking SQL commands in migrations. This test won't fail if there's
      * a too restrictive lock - it would just hang endlessly.
      */
@@ -335,8 +294,38 @@ public class PostgreSQLMigrationMediumTest extends MigrationTestCase {
                 return connection;
             }
         });
-        flyway1.setLocations(BASEDIR);
+        flyway1.setLocations(getBasedir());
         flyway1.setSchemas("public");
         flyway1.migrate();
+    }
+
+    @Test(expected = FlywayException.class)
+    public void warning() {
+        flyway.setLocations("migration/dbsupport/postgresql/sql/warning");
+        flyway.migrate();
+        // Log should contain "This is a warning"
+    }
+
+    @Override
+    protected void createFlyway3MetadataTable() throws Exception {
+        jdbcTemplate.execute("CREATE TABLE \"schema_version\" (\n" +
+                "    \"version_rank\" INT NOT NULL,\n" +
+                "    \"installed_rank\" INT NOT NULL,\n" +
+                "    \"version\" VARCHAR(50) NOT NULL,\n" +
+                "    \"description\" VARCHAR(200) NOT NULL,\n" +
+                "    \"type\" VARCHAR(20) NOT NULL,\n" +
+                "    \"script\" VARCHAR(1000) NOT NULL,\n" +
+                "    \"checksum\" INTEGER,\n" +
+                "    \"installed_by\" VARCHAR(100) NOT NULL,\n" +
+                "    \"installed_on\" TIMESTAMP NOT NULL DEFAULT now(),\n" +
+                "    \"execution_time\" INTEGER NOT NULL,\n" +
+                "    \"success\" BOOLEAN NOT NULL\n" +
+                ") WITH (\n" +
+                "  OIDS=FALSE\n" +
+                ")");
+        jdbcTemplate.execute("ALTER TABLE \"schema_version\" ADD CONSTRAINT \"schema_version_pk\" PRIMARY KEY (\"version\")");
+        jdbcTemplate.execute("CREATE INDEX \"schema_version_vr_idx\" ON \"schema_version\" (\"version_rank\")");
+        jdbcTemplate.execute("CREATE INDEX \"schema_version_ir_idx\" ON \"schema_version\" (\"installed_rank\")");
+        jdbcTemplate.execute("CREATE INDEX \"schema_version_s_idx\" ON \"schema_version\" (\"success\")");
     }
 }

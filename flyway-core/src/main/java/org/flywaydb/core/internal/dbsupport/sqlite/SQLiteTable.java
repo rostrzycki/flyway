@@ -1,5 +1,5 @@
 /**
- * Copyright 2010-2014 Axel Fontaine
+ * Copyright 2010-2016 Boxfuse GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,20 @@ import org.flywaydb.core.internal.util.logging.Log;
 import org.flywaydb.core.internal.util.logging.LogFactory;
 
 import java.sql.SQLException;
+import java.util.Collection;
+import java.util.Collections;
 
 /**
  * SQLite-specific table.
  */
 public class SQLiteTable extends Table {
     private static final Log LOG = LogFactory.getLog(SQLiteTable.class);
+
+    /** SQLite system tables are undroppable. */
+    private static final Collection<String> SYSTEM_TABLES =
+        Collections.singleton("sqlite_sequence");
+
+    private final boolean undroppable;
 
     /**
      * Creates a new SQLite table.
@@ -40,11 +48,16 @@ public class SQLiteTable extends Table {
      */
     public SQLiteTable(JdbcTemplate jdbcTemplate, DbSupport dbSupport, Schema schema, String name) {
         super(jdbcTemplate, dbSupport, schema, name);
+        undroppable = SYSTEM_TABLES.contains(name);
     }
 
     @Override
     protected void doDrop() throws SQLException {
-        jdbcTemplate.execute("DROP TABLE " + dbSupport.quote(schema.getName(), name));
+        if (undroppable) {
+            LOG.debug("SQLite system table " + this + " cannot be dropped. Ignoring.");
+        } else {
+            jdbcTemplate.execute("DROP TABLE " + dbSupport.quote(schema.getName(), name));
+        }
     }
 
     @Override
